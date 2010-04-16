@@ -98,8 +98,24 @@ class SysTray(object):
         self.icon = gtk.status_icon_new_from_file(APP_ICON_OFF)
         self.icon.set_tooltip_markup(_('<i>Idle</i>'))
         self.icon.connect('button_press_event', self.button_press)
+        self.icon.connect('scroll_event', self.scroll)
+
+    def scroll(self,widget, event):
+        if event.direction == gtk.gdk.SCROLL_UP:
+            self.mediator.volume_up()
+            
+        if event.direction == gtk.gdk.SCROLL_DOWN:
+            self.mediator.volume_down()
 
     def button_press(self,widget,event):
+
+        if event.button == 2:
+            if (self.mediator.isPlaying):
+                self.mediator.stop()
+            else:
+                if self.mediator.currentRadio:
+                    self.mediator.play(self.mediator.currentRadio)
+            return
 
         if(event.button == 1):
             self.radioMenu.popup(None, None, gtk.status_icon_position_menu, 0, event.get_time(), widget)
@@ -140,7 +156,7 @@ class SysTray(object):
     def setConnectingState(self, radio):
         self.turnOff.set_sensitive(True)
         self.icon.set_tooltip_markup(C_("Connecting to a music stream.", "Connecting to %s") % radio)
-        #self.icon.set_from_file(APP_ICON_CONNECT)
+        self.icon.set_from_file(APP_ICON_CONNECT)
 
     def updateRadioMetadata(self, data):
         print self.mediator.getCurrentRadio()
@@ -163,10 +179,15 @@ class SysTray(object):
 
         for radio in self.provider.listRadioNames():
 
-            radio1 = gtk.MenuItem(radio)
-            self.radioMenu.append(radio1)
-            radio1.show()
-            radio1.connect('activate', self.on_start, radio)
+            if radio.startswith("[separator-"):
+                separator = gtk.MenuItem()
+                self.radioMenu.append(separator)
+                separator.show()
+            else:
+                radio1 = gtk.MenuItem(radio)
+                self.radioMenu.append(radio1)
+                radio1.show()
+                radio1.connect('activate', self.on_start, radio)
 
 
 
