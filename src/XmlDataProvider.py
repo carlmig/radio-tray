@@ -127,6 +127,31 @@ class XmlDataProvider:
                     radioAdded = True
 
         return radioAdded
+        
+        
+    def updateGroup(self, oldName, newName):
+    
+        groupAdded = None
+        newNameStr = unicode(newName)
+        
+        result = self._groupExists(oldName)
+        
+        if result is None:
+            print "Could not find a group with the name \"%s\"." % oldName
+            groupAdded = False
+        else:
+            if oldName != newNameStr:
+                groupEx = self._groupExists(newNameStr)
+                if groupEx is not None:
+                    print "A group with the name \"%s\" already exists." % newName
+                    groupAdded = False
+                else:
+                    result.set("name", newNameStr)
+                    self.saveToFile()
+                    groupAdded = True
+
+        return groupAdded
+                    
 
 
     def removeRadio(self, name):                
@@ -256,3 +281,16 @@ class XmlDataProvider:
 
     def getRootGroup(self):
         return self.root.xpath("//group[@name='root']")[0]
+        
+        
+    def updateElementGroup(self, element, group_name):
+        
+        group = self._groupExists(group_name)
+        
+        if group != None:
+            old_group = element.getparent()
+            old_group.remove(element)
+            group.append(element)
+            self.saveToFile()
+        else:
+            print "Could not move element group"
