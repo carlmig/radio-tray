@@ -39,6 +39,7 @@ from lib.common import APPNAME, APPVERSION, APP_ICON_ON, APP_ICON_OFF, APP_ICON_
 from lib import i18n
 from about import AboutDialog
 from lib.utils import html_escape
+from events.EventManager import EventManager
 
 import dbus
 import textwrap
@@ -68,10 +69,11 @@ def about_dialog(parent=None):
 
 class SysTray(object):
 
-    def __init__(self, mediator, provider, log, cfg_provider):
+    def __init__(self, mediator, provider, log, cfg_provider, eventManager):
 
         self.version = APPVERSION
         self.mediator = mediator
+        self.eventManager = eventManager
 
         # initialize data provider
         self.provider = provider
@@ -123,52 +125,55 @@ class SysTray(object):
             # radios menu
             self.radioMenu = gtk.Menu()
             
-            if not self.mediator.currentRadio:
+            if not self.mediator.context.station:
                 self.turnOnOff = gtk.MenuItem(_("Turned Off"), False)
                 self.turnOnOff2 = gtk.MenuItem(_("Turned Off"), False)
                 self.turnOnOff.set_sensitive(False)
                 self.turnOnOff2.set_sensitive(False)
             else:
-                self.turnOnOff = gtk.MenuItem(_("Turn On \"%s\"" % self.mediator.currentRadio), False)
+                self.turnOnOff = gtk.MenuItem(_("Turn On \"%s\"" % self.mediator.context.station), False)
                 self.turnOnOff.set_sensitive(True)
-                self.turnOnOff2 = gtk.MenuItem(_("Turn On \"%s\"" % self.mediator.currentRadio), False)                
+                self.turnOnOff2 = gtk.MenuItem(_("Turn On \"%s\"" % self.mediator.context.station), False)                
                 self.turnOnOff2.set_sensitive(True)
             
             self.turnOnOff.connect('activate', self.on_turn_on_off)
             self.turnOnOff2.connect('activate', self.on_turn_on_off)
             self.update_radios()
-    
+
             # config menu
             self.menu = gtk.Menu()
+            self.turnOnOff2 = gtk.MenuItem(_("Turned Off"))
+            self.turnOnOff2.connect('activate', self.on_turn_on_off)
+            self.turnOnOff2.set_sensitive(False)
             separator  = gtk.MenuItem()
-            self.sleep_timer_menu_item = gtk.CheckMenuItem(_("Sleep Timer"))
+            self.sleep_timer_menu = gtk.CheckMenuItem(_("Sleep Timer"))
             menu_item1 = gtk.MenuItem(_("Configure Radios..."))
             menu_item4 = gtk.MenuItem(_("Reload Bookmarks"))        
             menu_item3 = gtk.ImageMenuItem(gtk.STOCK_ABOUT)
             menu_item2 = gtk.ImageMenuItem(gtk.STOCK_QUIT)        
             self.menu.append(self.turnOnOff2)
             self.menu.append(separator) 
-            self.menu.append(self.sleep_timer_menu_item)       
+            self.menu.append(self.sleep_timer_menu)       
             self.menu.append(menu_item1)
             self.menu.append(menu_item4)        
-            self.menu.append(gtk.MenuItem())                
+            self.menu.append(gtk.MenuItem())        
             self.menu.append(menu_item3)
             self.menu.append(menu_item2)        
             menu_item1.show()
             menu_item2.show()
             menu_item3.show()
             menu_item4.show()
-            self.sleep_timer_menu_item.show()
+            self.sleep_timer_menu.show()
             self.turnOnOff2.show()
             separator.show()      
-            
+        
             menu_item1.connect('activate', self.on_preferences)
             menu_item2.connect('activate', self.on_quit)
             menu_item3.connect('activate', self.on_about)
             menu_item4.connect('activate', self.reload_bookmarks)
-            self.sleep_timer_menu_item.connect('activate', self.on_sleep_menu)
-                            
-            self.menu.show_all()      
+            self.sleep_timer_menu.connect('activate', self.on_sleep_menu)
+                        
+            self.menu.show_all()
 
             self.icon = gtk.status_icon_new_from_file(APP_ICON_OFF)
             self.icon.set_tooltip_markup(_("Idle (vol: %s%%)") % (self.mediator.getVolume()))
@@ -186,16 +191,12 @@ class SysTray(object):
             self.build_app_indicator_menu(self.radioMenu)
             self.app_indicator.set_menu(self.radioMenu)
             self.updateTooltip()
-            
 
         # MediaKeys
-        try:
-            self.bus = dbus.SessionBus()
-            self.bus_object = self.bus.get_object('org.gnome.SettingsDaemon', '/org/gnome/SettingsDaemon/MediaKeys')
-
-            self.bus_object.connect_to_signal('MediaPlayerKeyPressed', self.handle_mediakey)
-        except:
-            print "Could not bind to Gnome for Media Keys"
+        
+            
+            
+###### Action Events #######
 
     def scroll(self,widget, event):
         if event.direction == gtk.gdk.SCROLL_UP:
@@ -203,38 +204,25 @@ class SysTray(object):
             
         if event.direction == gtk.gdk.SCROLL_DOWN:
             self.mediator.volume_down()
-            
     def volume_up(self, menu_item):
         self.mediator.volume_up()
-            
     def volume_down(self, menu_item):
         self.mediator.volume_down()
 
     def button_press(self,widget,event):
 
-        if event.button == 2:
-            if (self.mediator.isPlaying):
-                self.mediator.stop()
-            else:
-                if self.mediator.currentRadio:
-                    self.mediator.play(self.mediator.currentRadio)
-            return
-
         if(event.button == 1):
             self.radioMenu.popup(None, None, gtk.status_icon_position_menu, 0, event.get_time(), widget)
+        elif (event.button == 2):
+            if (self.mediator.getContext().state == 'playing'):
+                self.mediator.stop()
+            else:
+                if self.mediator.getContext().station:
+                    self.mediator.play(self.mediator.getContext().station)
         else:
             self.menu.popup(None, None, gtk.status_icon_position_menu, 2, event.get_time(), widget)
 
-    def handle_mediakey(self, *mmkeys):
-        for key in mmkeys:
-            if key == "Play":
-                if (self.mediator.isPlaying):
-                    self.mediator.stop()
-                elif self.mediator.currentRadio:
-                    self.mediator.play(self.mediator.currentRadio)
-            elif key == "Stop":
-                if (self.mediator.isPlaying):
-                    self.mediator.stop()
+    
 
     def on_preferences(self, data):
         config = BookmarkConfiguration(self.provider, self.update_radios)
@@ -247,13 +235,14 @@ class SysTray(object):
         about_dialog(parent=None)
 
     def on_turn_on_off(self, data):
-        if self.mediator.isPlaying:
+        if self.mediator.context.state == 'playing':
             self.mediator.stop()
         else:
-            self.mediator.play(self.mediator.currentRadio)
+            self.mediator.play(self.mediator.context.station)
 
     def on_start(self, data, radio):
         self.mediator.play(radio)
+    
         
     def on_sleep_timer(self):
         self.min_to_sleep-=1       
@@ -312,7 +301,7 @@ class SysTray(object):
         self.sleep_timer_id = None  
         if display_msg:                   
             self.mediator.notify("Sleep timer stopped")
-    
+
     def setStoppedState(self):
         if not self.mediator.currentRadio:        
             self.turnOnOff.set_label(_('Turned Off'))
@@ -359,20 +348,19 @@ class SysTray(object):
             self.icon.set_tooltip_markup(C_("Connecting to a music stream.", "Connecting to %s") % radio.replace("&", "&amp;"))
             self.icon.set_from_file(APP_ICON_CONNECT)
 
-    def updateTooltip(self):
-        
-        radio = html_escape(self.mediator.getCurrentRadio())
 
-        songInfo = None
-        if(self.mediator.getCurrentMetaData() and len(self.mediator.getCurrentMetaData()) > 0):
-            songInfo = self.mediator.getCurrentMetaData() if self.app_indicator else html_escape(self.mediator.getCurrentMetaData())            
+    def updateTooltip(self):
+        radio = html_escape(self.mediator.getContext().station)
+        songInfo = html_escape(self.mediator.getContext().getSongInfo())
+	#songInfo = self.mediator.getCurrentMetaData() if self.app_indicator else html_escape(self.mediator.getCurrentMetaData())            
         
         volume = self.mediator.getVolume()
+        
         sleep_timer_info = ""
         if self.sleep_timer_id != None:
             sleep_timer_info = ", sleep: " + str(self.min_to_sleep) + "min"
         
-        if self.mediator.isPlaying:
+        if (self.mediator.getContext().state == 'playing'):
             if(songInfo):
                 if not self.app_indicator:
                     self.icon.set_tooltip_markup(C_("Informs what radio and music is being played as a tooltip.", "Playing <b>%s</b> (vol: %s%%%s)\n<i>%s</i>") % (radio, volume, sleep_timer_info, songInfo))
@@ -397,6 +385,8 @@ class SysTray(object):
                 self.icon.set_tooltip_markup(C_("Informs what radio and music is being played as a tooltip.", "Idle (vol: %s%%%s)") % (volume, sleep_timer_info))
             else:                
                 self.metadata_menu_item.set_label("Idle (vol: %s%%%s)" % (volume, sleep_timer_info))              
+		
+
 
     def update_radios(self):
 
@@ -404,20 +394,19 @@ class SysTray(object):
             self.radioMenu.remove(child)
 
         if not self.app_indicator:
-        
+
             self.radioMenu.append(self.turnOnOff)
             self.turnOnOff.show()
-    
+
             separator = gtk.MenuItem()
             self.radioMenu.append(separator)
             separator.show()
-    
+
             # build menu
             self.provider.walk_bookmarks(self.group_callback, self.bookmark_callback, self.radioMenu)
             self.radioMenu.show_all()
         else:
             self.build_app_indicator_menu(self.radioMenu)
-        
         
     def run(self):
         gtk.gdk.threads_init()
@@ -455,11 +444,10 @@ class SysTray(object):
     def reload_bookmarks(self, data):
         self.provider.loadFromFile()
         self.update_radios()
-        self.mediator.notify(_("Bookmarks Reloaded"))
+        self.eventManager.notify(EventManager.BOOKMARKS_RELOADED, {})
         
 
     def get_sleep_timer_value(self, default_value):
-
         gtk.gdk.threads_enter()
 
         dialog = gtk.Dialog("Edit Sleep Timer", None, gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT,
@@ -485,19 +473,54 @@ class SysTray(object):
         dialog.destroy()
         
         gtk.gdk.threads_leave()
-        
         return sleep_timer_value
     
+    
+    def on_state_changed(self, data):
+    
+        state = data['state']
+        
+        
+        if(state == 'playing'):
+            station = data['station']
+            self.turnOnOff.set_label(C_('Turns off the current radio.', 'Turn Off "%s"') % station)
+            self.turnOnOff.set_sensitive(True)
+            if not self.app_indicator:
+                self.turnOnOff2.set_label(C_('Turns off the current radio.', 'Turn Off "%s"') % station)
+                self.turnOnOff2.set_sensitive(True)
+                self.icon.set_from_file(APP_ICON_ON)
+                self.updateTooltip()
+            
+        elif(state == 'paused'):
+            self.turnOnOff.set_label(_('Turned Off'))
+            self.turnOnOff.set_sensitive(False)
+            if not self.app_indicator:
+                self.turnOnOff2.set_label(_('Turned Off'))
+                self.turnOnOff2.set_sensitive(False)
+                self.icon.set_from_file(APP_ICON_OFF)
+                self.updateTooltip()
+        
+        elif(state == 'connecting'):
+            station = data['station']
+            self.turnOnOff.set_sensitive(True)
+            if not self.app_indicator:
+                self.turnOnOff2.set_sensitive(True)
+                self.icon.set_tooltip_markup(C_("Connecting to a music stream.", "Connecting to %s") % station.replace("&", "&amp;"))
+                self.icon.set_from_file(APP_ICON_CONNECT)
 
+    def on_volume_changed(self, volume):
+        if not self.app_indicator:
+            self.updateTooltip()
+        
     def build_app_indicator_menu(self, menu):
                     
         # config menu   
         if self.turnOnOff == None:                        
-            if not self.mediator.currentRadio:
+            if not self.mediator.getContext().station:
                 self.turnOnOff = gtk.MenuItem(_("Turned Off"), False)
                 self.turnOnOff.set_sensitive(False)
             else:
-                self.turnOnOff = gtk.MenuItem(_("Turn On \"%s\"" % self.mediator.currentRadio), False)
+                self.turnOnOff = gtk.MenuItem(_("Turn On \"%s\"" % self.mediator.context.station), False)
                 self.turnOnOff.set_sensitive(True)
                 
             self.turnOnOff.connect('activate', self.on_turn_on_off)
