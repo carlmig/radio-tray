@@ -24,7 +24,12 @@ from AudioPlayerGStreamer import AudioPlayerGStreamer
 from SysTray import SysTray
 from StateMediator import StateMediator
 from Notification import Notification
+from NotificationManager import NotificationManager
+from events.EventManager import EventManager
+from events.EventSubscriber import EventSubscriber
 from DbusFacade import DbusFacade
+from TooltipManager import TooltipManager
+from PluginManager import PluginManager
 import os
 from shutil import move, copy2
 from lib.common import APPDIRNAME, USER_CFG_PATH, CFG_NAME, OLD_USER_CFG_PATH, DEFAULT_RADIO_LIST, OPTIONS_CFG_NAME, DEFAULT_CONFIG_FILE
@@ -37,8 +42,6 @@ class RadioTray(object):
         # load configuration
         self.loadConfiguration()
 
-        # load notification engine
-        notification = Notification()
 
         # load log engine
         self.log = ConsoleLog()
@@ -51,29 +54,58 @@ class RadioTray(object):
         self.cfg_provider = XmlConfigProvider(self.cfg_filename)
         self.cfg_provider.loadFromFile()
 
+        # load notification engine
+        notification = Notification(self.cfg_provider)
+
+        # load Event Manager
+        eventManager = EventManager()
+
         # mediator
-        self.mediator = StateMediator(self.provider, self.cfg_provider, notification)
+        self.mediator = StateMediator(self.provider, self.cfg_provider, eventManager)
 
         # load audio player
-        self.audio = AudioPlayerGStreamer(self.mediator, self.cfg_provider, self.log)
+        self.audio = AudioPlayerGStreamer(self.mediator, self.cfg_provider, self.log, eventManager)
+
+        # tooltip manager
+        tooltipManager = TooltipManager()
 
         # load gui
-        self.systray = SysTray(self.mediator, self.provider, self.log, self.cfg_provider)
+        self.systray = SysTray(self.mediator, self.provider, self.log, self.cfg_provider, eventManager, tooltipManager)
+        
+        
+        
+        # notification manager
+        self.notifManager = NotificationManager(notification)
+
+        # bind events
+        eventSubscriber = EventSubscriber(eventManager)
+        eventSubscriber.bind(EventManager.STATE_CHANGED, self.mediator.on_state_changed)
+        eventSubscriber.bind(EventManager.STATE_CHANGED, self.systray.on_state_changed)
+        eventSubscriber.bind(EventManager.STATE_CHANGED, self.notifManager.on_state_changed)
+        eventSubscriber.bind(EventManager.SONG_CHANGED, self.notifManager.on_song_changed)
+        eventSubscriber.bind(EventManager.SONG_CHANGED, self.mediator.on_song_changed)
+        eventSubscriber.bind(EventManager.SONG_CHANGED, self.systray.on_song_changed)
+        eventSubscriber.bind(EventManager.STATION_ERROR, self.notifManager.on_station_error)
+        eventSubscriber.bind(EventManager.VOLUME_CHANGED, self.systray.on_volume_changed)
+        eventSubscriber.bind(EventManager.BOOKMARKS_RELOADED, self.notifManager.on_bookmarks_reloaded)
 
         # config mediator
-        self.mediator.setAudioPlayer(self.audio)
-        self.mediator.setSystray(self.systray)
+        self.mediator.init(self.audio)
+
 
         # start dbus facade
-        dbus = DbusFacade(self.provider, self.mediator)
-        dbus_mpris = mpris.RadioTrayMpris(self.provider, self.mediator)
+        #dbus = DbusFacade(self.provider, self.mediator)
+        #dbus_mpris = mpris.RadioTrayMpris(self.provider, self.mediator)
+
+	#load plugin manager
+        self.pluginManager = PluginManager(notification, eventSubscriber, self.provider, self.cfg_provider, self.mediator, tooltipManager, self.systray.getPluginMenu())
+        self.pluginManager.activatePlugins()
 
         if(url != None):
             if (url == "--resume"):
                 self.mediator.playLast()                
             else:
                 self.mediator.playUrl(url)
-
         # start app
         self.systray.run()
 
