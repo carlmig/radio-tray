@@ -24,14 +24,18 @@ pygst.require("0.10")
 import gst
 from StreamDecoder import StreamDecoder
 from lib.common import USER_AGENT
+from events.EventManager import EventManager
+import logging
 
 class AudioPlayerGStreamer:
 
-    def __init__(self, mediator, cfg_provider, log):
+    def __init__(self, mediator, cfg_provider, eventManager):
         self.mediator = mediator
-        self.log = log
+        self.eventManager = eventManager
         self.decoder = StreamDecoder(cfg_provider)
         self.playlist = []
+
+        self.log = logging.getLogger('radiotray')
 
         # init player
         self.souphttpsrc = gst.element_factory_make("souphttpsrc", "source")
@@ -40,6 +44,7 @@ class AudioPlayerGStreamer:
         self.player = gst.element_factory_make("playbin2", "player")		
         fakesink = gst.element_factory_make("fakesink", "fakesink")
         self.player.set_property("video-sink", fakesink)
+        #self.player.set_property("buffer-duration", 10000)
         bus = self.player.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self.on_message)
@@ -51,25 +56,25 @@ class AudioPlayerGStreamer:
         if(urlInfo is not None and urlInfo.isPlaylist()):
             self.playlist = self.decoder.getPlaylist(urlInfo)
             if(len(self.playlist) == 0):
-                print "Received empty playlist!"
+                self.log.warn('Received empty playlist!')
                 self.mediator.stop()
                 self.mediator.notifyError(_("Connection Error"), _("Received empty stream from station"))
-            print self.playlist
+            self.log.debug(self.playlist)
             self.playNextStream()
 
         elif(urlInfo is not None and urlInfo.isPlaylist() == False):
             self.playlist = [urlInfo.getUrl()]
             self.playNextStream()
 
-        else:            
-            self.mediator.stop()
-            self.mediator.notifyError(_("Connection Error"), _("Couldn't read stream from station"))
-
+        else:
+            self.stop()
+            self.eventManager.notify(EventManager.STATION_ERROR, {'error':"Couldn't connect to radio station"})
+            
 
     def playNextStream(self):
         if(len(self.playlist) > 0):
             stream = self.playlist.pop(0)
-            print "Play " + stream
+            self.log.info('Play "%s"', stream)
 
             urlInfo = self.decoder.getMediaStreamInfo(stream)
             if(urlInfo is not None and urlInfo.isPlaylist() == False):
@@ -82,11 +87,12 @@ class AudioPlayerGStreamer:
                 self.playNextStream()
         else:
             self.stop()
-            self.mediator.notifyStopped()
+            self.eventManager.notify(EventManager.STATE_CHANGED, {'state':'paused'})
         self.mediator.updateVolume(self.player.get_property("volume"))
 
     def stop(self):
         self.player.set_state(gst.STATE_NULL)
+        self.eventManager.notify(EventManager.STATE_CHANGED, {'state':'paused'})
 
     def volume_up(self, volume_increment):   
         self.player.set_property("volume", min(self.player.get_property("volume") + volume_increment, 1.0))
@@ -98,8 +104,9 @@ class AudioPlayerGStreamer:
 
     def on_message(self, bus, message):
         t = message.type
+
         if t == gst.MESSAGE_EOS:
-            self.log.log("Received MESSAGE_EOS")
+            self.log.debug("Received MESSAGE_EOS")
             self.player.set_state(gst.STATE_NULL)
             self.playNextStream()
         elif t == gst.MESSAGE_BUFFERING:
@@ -108,46 +115,38 @@ class AudioPlayerGStreamer:
             else:
                 self.player.set_state(gst.STATE_PLAYING)
         elif t == gst.MESSAGE_ERROR:
-            self.log.log("Received MESSAGE_ERROR")
+            self.log.debug("Received MESSAGE_ERROR")
             self.player.set_state(gst.STATE_NULL)
             err, debug = message.parse_error()
-            print err
-            print debug
+            self.log.warn(err)
+            self.log.warn(debug)
 
             if(len(self.playlist)>0):
                 self.playNextStream()
             else:
-                self.mediator.notifyError(err, debug)
+                self.eventManager.notify(EventManager.STATION_ERROR, {'error':debug})
+
         elif t == gst.MESSAGE_STATE_CHANGED:
-            self.log.log("Received MESSAGE_STATE_CHANGED")
+            self.log.debug("Received MESSAGE_STATE_CHANGED")
             oldstate, newstate, pending = message.parse_state_changed()
 
             if newstate == gst.STATE_PLAYING:
-                self.mediator.notifyPlaying()
+                station = self.mediator.getContext().station
+                self.eventManager.notify(EventManager.STATE_CHANGED, {'state':'playing', 'station':station})
             #elif newstate == gst.STATE_NULL:
                 #self.mediator.notifyStopped()
 
         elif t == gst.MESSAGE_TAG:
 
            taglist = message.parse_tag()
-           title = None
-           artist = None
+           station = self.mediator.getContext().station
+           metadata = {}
 
-           for key in taglist.keys():
-           	if (key == 'bitrate'):
-            		self.mediator.bitrate = taglist[key]
-                if (key == 'artist'):
-                        print "ARTIST: " + taglist[key]
-                        artist = taglist[key]
-           	if (key == 'title'):
-                	print "TITLE: " + taglist[key]
-            		title = taglist[key]
-                
-           if artist and title:
-               self.mediator.notifySong(artist + " - " + title)
-           elif title:
-               self.mediator.notifySong(title)
-           elif artist:
-               self.mediator.notifySong(artist)
+           for key in taglist.keys():      
+               metadata[key] = taglist[key]
+
+           metadata['station'] = station
+           
+           self.eventManager.notify(EventManager.SONG_CHANGED, metadata)
 
         return True

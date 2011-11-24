@@ -17,23 +17,46 @@
 # along with Radio Tray.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##########################################################################
-import pynotify
+
+from Plugin import Plugin
 import gtk
+import gobject
+import pynotify
 from lib.common import APP_ICON, APPNAME
-import logging
+from events.EventManager import EventManager
 
-class Notification:
+class NotificationPlugin(Plugin):
 
-    def __init__(self, cfg_provider):
+    def __init__(self):
+        super(NotificationPlugin, self).__init__()
+
+    def getName(self):
+        return self.name
+
+    def initialize(self, name, notification, eventSubscriber, provider, cfgProvider, mediator, tooltip):
+    
+        self.name = name
+        self.notification = notification
+        self.eventSubscriber = eventSubscriber
+        self.provider = provider
+        self.cfgProvider = cfgProvider
+        self.mediator = mediator
+        self.tooltip = tooltip
+        
+
+    def activate(self):
         self.notif = None
-        self.cfg_provider = cfg_provider
         self.lastMessage = None
-        self.log = logging.getLogger('radiotray')
+        self.eventSubscriber.bind(EventManager.NOTIFICATION, self.on_notification)
+
+
+    def on_notification(self, data):
+        self.notify(data['title'], data['message'])
 
 
     def notify(self, title, message):
 
-        if self.cfg_provider.getConfigValue("enabled_notifications") == "true" and self.lastMessage != message:
+        if self.lastMessage != message:
 
             self.lastMessage = message
             
