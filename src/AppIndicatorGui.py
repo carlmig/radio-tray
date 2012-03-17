@@ -134,18 +134,18 @@ class AppIndicatorGui:
         menu.append(menu_quit)
 
         menu.show_all()
-
+        
         try:
             self.app_indicator.connect("scroll-event", self.app_indicator_scroll)
         except:
             # not available in this version of app indicator
             self.log.info("App indicator scroll events are not available.")
 
-        def app_indicator_scroll(self, indicator, delta, direction):
-            if direction == 0:
-                self.mediator.volume_up()
-            else:
-                self.mediator.volume_down()
+    def app_indicator_scroll(self, indicator, delta, direction):
+        if direction == 0:
+            self.mediator.volume_up()
+        else:
+            self.mediator.volume_down()
 
 
     def update_radios(self):
